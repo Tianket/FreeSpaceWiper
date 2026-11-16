@@ -1,0 +1,105 @@
+# Builds the APK on GitHub's servers with the official toolchain only:
+# GitHub's own actions, the Android SDK preinstalled on the runner, and Gradle.
+# Open the Actions tab and download "FreeSpaceWiper-apk" from the finished run.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Show toolchain
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
+          ./gradlew --version
+
+      - name: Unit tests (engine on a small simulated volume)
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Lint (API level and resource checks)
+        run: ./gradlew --no-daemon lintRelease
+
+      - name: Build release APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: APK checksum and contents
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cd app/build/outputs/apk/release
+          sha256sum app-release.apk
+          "$BT/aapt2" dump badging app-release.apk | grep -E "^package|^sdkVersion|^targetSdkVersion|^uses-permission|^locales"
+          "$BT/apksigner" verify --verbose --min-sdk-version 23 app-release.apk | grep -E "^Verif"
+          unzip -l app-release.apk | grep -E "\.dex|\.so$" || true
+          ANALYZER=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/apkanalyzer | tail -1)
+          "$ANALYZER" dex packages --defined-only app-release.apk | awk '$1=="C"{print $NF}' > classes.txt
+          echo "classes in the APK: $(wc -l < classes.txt)"
+          echo "classes outside app.freespacewiper: $(grep -vc '^app\.freespacewiper\.' classes.txt || true)"
+          grep -v '^app\.freespacewiper\.' classes.txt || true
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: FreeSpaceWiper-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-*.html
+          if-no-files-found: ignore
+
+  # Forensic check on real file systems: write marked files, delete them, wipe as an
+  # unprivileged user, then scan the raw disk image for surviving marker blocks.
+  raw-disk:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fs: [ext4, f2fs]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare file system tools
+        run: |
+          if [ "${{ matrix.fs }}" = "f2fs" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq f2fs-tools
+            sudo modprobe f2fs || { sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" && sudo modprobe f2fs; } || true
+          fi
+          uname -r
+          grep -w "${{ matrix.fs }}" /proc/filesystems || echo "SKIP=1" >> "$GITHUB_ENV"
+
+      - name: Wipe and scan the raw disk
+        run: |
+          if [ -n "${SKIP:-}" ]; then echo "::warning::${{ matrix.fs }} is not available on this runner, skipped"; exit 0; fi
+          failed=0
+          verify/run.sh ${{ matrix.fs }} || failed=1
+          LAYOUT=aged verify/run.sh ${{ matrix.fs }} || failed=1
+          INTERRUPT=1 verify/run.sh ${{ matrix.fs }} || failed=1
+          if [ "${{ matrix.fs }}" = "f2fs" ]; then
+            # Android mounts /data with space reserved for the system, like this:
+            LAYOUT=aged MOUNT_EXTRA=reserve_root=32768 verify/run.sh f2fs || failed=1
+          fi
+          echo "--- without the sweep phase, for comparison (not part of the verdict)"
+          SWEEP=false LAYOUT=aged verify/run.sh ${{ matrix.fs }} || true
+          exit $failed

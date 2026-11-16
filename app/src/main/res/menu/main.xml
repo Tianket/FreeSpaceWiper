@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Language choices, shown as a popup from the header button. -->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@+id/menu_lang_system"
+            android:title="@string/lang_system" />
+        <item
+            android:id="@+id/menu_lang_zh"
+            android:title="@string/lang_zh" />
+        <item
+            android:id="@+id/menu_lang_en"
+            android:title="@string/lang_en" />
+    </group>
+</menu>

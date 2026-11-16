@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.freespacewiper'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.freespacewiper'
+        minSdk 23
+        targetSdk 34
+        versionCode 4
+        versionName '3.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signed with the local debug key so the APK installs directly (personal sideload use).
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        // Report everything in the build log; the build itself is not blocked by lint.
+        abortOnError false
+        textReport true
+    }
+}
+
+dependencies {
+    // No runtime dependencies at all: no AndroidX, no ads, no analytics.
+    testImplementation 'junit:junit:4.13.2'
+}
